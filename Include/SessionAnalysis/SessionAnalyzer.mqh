@@ -8,6 +8,8 @@
 #property version   "1.00"
 #property strict
 
+#include "../Core/CompatMQL4.mqh"
+
 //+------------------------------------------------------------------+
 //| Session Information Structure                                    |
 //+------------------------------------------------------------------+
@@ -188,7 +190,7 @@ private:
         if(count > 0) {
             double avgRange = rangeSum / count;
             double currentATR = iATR(_Symbol, timeframe, 14, 0);
-            return avgRange / currentATR;
+            return (currentATR > 0) ? avgRange / currentATR : 1.0;
         }
 
         // Valores por defecto si no hay suficientes datos

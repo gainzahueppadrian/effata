@@ -9,6 +9,7 @@
 #property strict
 
 #include <Math/Math.mqh>
+#include "../Core/CompatMQL4.mqh"
 
 //+------------------------------------------------------------------+
 //| CRT Signal Structure                                             |
@@ -20,6 +21,15 @@ struct CRTSignal {
     double resistanceLevel;     // Nivel de resistencia
     double atrValue;            // Valor ATR
     int patternType;            // Tipo de patrón identificado
+
+    void Initialize() {
+        signalType = "NONE";
+        confidence = 0.0;
+        supportLevel = 0.0;
+        resistanceLevel = 0.0;
+        atrValue = 0.0;
+        patternType = 0;
+    }
 };
 
 //+------------------------------------------------------------------+
@@ -48,11 +58,12 @@ public:
     }
 
     CRTSignal Analyze(ENUM_TIMEFRAMES timeframe) {
-        CRTSignal signal = {"NONE", 0.0, 0.0, 0.0, 0.0, 0};
+        CRTSignal signal;
+        signal.Initialize();
 
         // Obtener datos necesarios
         const int needBars = MathMax(atrPeriod + 5, minInsideBars + 3);
-        if(Bars(_Symbol, timeframe) < needBars) {
+        if(iBars(_Symbol, timeframe) < needBars) {
             return signal;
         }
 
@@ -62,10 +73,25 @@ public:
         ArraySetAsSeries(open, true);
         ArraySetAsSeries(close, true);
 
-        CopyHigh(_Symbol, timeframe, 0, needBars, high);
-        CopyLow(_Symbol, timeframe, 0, needBars, low);
-        CopyOpen(_Symbol, timeframe, 0, needBars, open);
-        CopyClose(_Symbol, timeframe, 0, needBars, close);
+        #ifdef __MQL4__
+           // MQL4 handles ArraySetAsSeries automatically for arrays like High[], Low[] but here we use Copy functions wrapper or manual copy
+           // Assuming CompatMQL4.mqh handles iHigh etc. But for array operations:
+           ArrayResize(high, needBars);
+           ArrayResize(low, needBars);
+           ArrayResize(open, needBars);
+           ArrayResize(close, needBars);
+           for(int i=0; i<needBars; i++) {
+               high[i] = iHigh(_Symbol, timeframe, i);
+               low[i] = iLow(_Symbol, timeframe, i);
+               open[i] = iOpen(_Symbol, timeframe, i);
+               close[i] = iClose(_Symbol, timeframe, i);
+           }
+        #else
+           CopyHigh(_Symbol, timeframe, 0, needBars, high);
+           CopyLow(_Symbol, timeframe, 0, needBars, low);
+           CopyOpen(_Symbol, timeframe, 0, needBars, open);
+           CopyClose(_Symbol, timeframe, 0, needBars, close);
+        #endif
 
         // Calcular ATR
         double atr = CalculateATR(high, low, close, atrPeriod, 0);
@@ -78,14 +104,14 @@ public:
         // Analizar patrones CRT
         bool isLargeCandle = IsLargeCandle(open[1], high[1], low[1], close[1], atr);
         bool isSmallCandle = IsSmallCandle(open[1], high[1], low[1], close[1], atr);
-        bool isInsideBar = IsInsideBar(high[1], low[1], high[2], low[2]);
+        // bool isInsideBar = IsInsideBar(high[1], low[1], high[2], low[2]); // Not used but good for reference
         int insideBarCount = CountConsecutiveInsideBars(high, low, needBars);
         bool isOutsideBar = IsOutsideBar(high[1], low[1], high[2], low[2]);
 
         // Analizar contexto de mercado
         bool isTrendUp = IsUptrend(close, needBars);
         bool isTrendDown = IsDowntrend(close, needBars);
-        bool isVolatilityHigh = (atr / close[1]) > 0.005; // ATR > 0.5% del precio
+        bool isVolatilityHigh = (close[1] > 0) ? (atr / close[1]) > 0.005 : false; // ATR > 0.5% del precio
 
         // Detectar señales de compra
         if(isTrendUp && (isLargeCandle || isOutsideBar) && close[1] > open[1]) {
@@ -184,7 +210,10 @@ private:
             sumX2 += i * i;
         }
 
-        double slope = (points * sumXY - sumX * sumY) / (points * sumX2 - sumX * sumX);
+        double denom = (points * sumX2 - sumX * sumX);
+        if(denom == 0) return false;
+
+        double slope = (points * sumXY - sumX * sumY) / denom;
         return slope > 0;
     }
 
@@ -202,11 +231,15 @@ private:
             sumX2 += i * i;
         }
 
-        double slope = (points * sumXY - sumX * sumY) / (points * sumX2 - sumX * sumX);
+        double denom = (points * sumX2 - sumX * sumX);
+        if(denom == 0) return false;
+
+        double slope = (points * sumXY - sumX * sumY) / denom;
         return slope < 0;
     }
 
     double CalculateSupportLevel(const double &low[], int totalBars, int lookback) {
+        if(totalBars == 0) return 0;
         double min = low[0];
 
         for(int i = 1; i < MathMin(totalBars, lookback + 1); i++) {
@@ -219,6 +252,7 @@ private:
     }
 
     double CalculateResistanceLevel(const double &high[], int totalBars, int lookback) {
+        if(totalBars == 0) return 0;
         double max = high[0];
 
         for(int i = 1; i < MathMin(totalBars, lookback + 1); i++) {
