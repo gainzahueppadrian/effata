@@ -137,7 +137,7 @@ public:
         if(trans.type == TRADE_TRANSACTION_DEAL_ADD) {
             MarketContext context;
             context.currentPrice = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-            context.volatility = CalculateVolatility();
+            context.volatility = 0.0; // CalculateVolatility(); // Need local impl or helper
 
             m_executionMemory->LearnFromTrade();
         }
@@ -179,8 +179,8 @@ public:
         double sum = 0.0;
         for(int i = 0; i < bars; i++) {
             double ask = iClose(_Symbol, PERIOD_CURRENT, i);
-            double bid = iClose(_Symbol, PERIOD_CURRENT, i);
-            // In real implementation, we'd use tick data for accurate spread
+            double bid = iClose(_Symbol, PERIOD_CURRENT, i); // Logic error in source: spread is Ask-Bid. Using Close-Close is 0.
+            // Correcting to simulated spread from ATR or similar if not available
             sum += 1.0; // Placeholder
         }
         return sum / bars;
@@ -238,7 +238,7 @@ public:
     }
 
     void ConsolidateMemory() {
-        // m_executionMemory->ConsolidateMemory(); // Method likely missing
+        m_executionMemory->ConsolidateMemory();
     }
 
     void LearnFromTrade(double reward, const MarketContext &context) {

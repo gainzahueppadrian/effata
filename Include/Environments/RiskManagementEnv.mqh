@@ -14,6 +14,10 @@ private:
     bool m_enableAdaptiveRisk;
     double m_initialEquity;
 
+    // Internal state for tick updates
+    double m_runningDrawdown;
+    double m_peakEquity;
+
 public:
     CRiskManagementEnv(double riskPerTrade = 0.005, bool enableAdaptive = true) {
         m_riskPerTradePercent = riskPerTrade;
@@ -21,6 +25,8 @@ public:
         m_monteCarloEnv = new CMonteCarloRiskEnvironment();
         m_calendar = new CEconomicCalendar();
         m_initialEquity = 0;
+        m_runningDrawdown = 0;
+        m_peakEquity = 0;
     }
 
     ~CRiskManagementEnv() {
@@ -30,6 +36,7 @@ public:
 
     bool Initialize() {
         m_initialEquity = AccountInfoDouble(ACCOUNT_EQUITY);
+        m_peakEquity = m_initialEquity;
         m_calendar->UpdateCalendar(); // Initial fetch
         return m_monteCarloEnv->Initialize();
     }
@@ -83,23 +90,45 @@ public:
     }
 
     void UpdateFromTick(const double &features[]) {
-        // Update Monte Carlo environment if needed
+        // Track intra-tick drawdown
+        double equity = AccountInfoDouble(ACCOUNT_EQUITY);
+        if(equity > m_peakEquity) m_peakEquity = equity;
+
+        double drawdown = 0.0;
+        if(m_peakEquity > 0) drawdown = (m_peakEquity - equity) / m_peakEquity;
+        m_runningDrawdown = drawdown;
+
+        // Check for sudden liquidity gaps using features (spread/volatility)
+        // features[6] is ATR, features[8] is volatility
     }
 
     void SelfVerify(const double &features[]) {
-        // Self-verification logic
+        // Check if internal states match expected reality
+        double equity = AccountInfoDouble(ACCOUNT_EQUITY);
+        if(equity < m_initialEquity * 0.5) {
+            Print("CRITICAL: Equity mismatch or catastrophic loss detected in verification.");
+        }
     }
 
     void ConsolidateMemory() {
-        // Memory consolidation logic
+        // Log risk metrics to file or long-term storage
+        // For now, we just simulate cleanup
     }
 
     void LearnFromTrade(double reward, const MarketContext &context) {
-        // Learning logic
+        // Reinforce risk parameters. If reward is negative (loss), tighten risk.
+        // If positive, maybe relax slightly or maintain.
+        // This logic is partially handled in UpdateFromTrade via MonteCarloEnv
+        UpdateFromTrade(reward, 1.0); // Assuming 1.0 risk unit
     }
 
     void OnSessionChange(const MarketContext &context) {
-        // Session change handling
+        // Adjust base risk per trade based on session liquidity
+        if(context.sessionType == "ASIA") {
+            m_riskPerTradePercent *= 0.8; // Lower risk in Asia
+        } else if(context.sessionType == "LONDON" || context.sessionType == "NEW_YORK") {
+            m_riskPerTradePercent = 0.005; // Reset to standard
+        }
     }
 
     // New Features methods

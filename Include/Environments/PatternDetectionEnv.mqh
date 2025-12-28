@@ -126,7 +126,7 @@ public:
     }
 
     void ConsolidateMemory() {
-        // m_patternMemory->ConsolidateMemory(); // Method likely missing
+        m_patternMemory->ConsolidateMemory();
     }
 
     void LearnFromTrade(double reward, const MarketContext &context) {
