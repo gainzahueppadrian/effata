@@ -18,6 +18,7 @@
 #include "../Environments/MonteCarloEnv.mqh"
 #include "../Core/Structures.mqh"
 #include "../Environments/AILLMTradingEnv.mqh"
+#include "../Environments/StatisticsEnv.mqh" // Added for Meta Learning context
 
 //--- Hyperparameters
 #define DIM_FEATURES 128    // Expanded Feature Vector Size (Multi EMA + TF)
@@ -63,6 +64,9 @@ private:
    //--- AI Trading Environment
    CAILLMTradingEnv *m_aiEnv;
 
+   //--- Statistics for Meta-Learning
+   CStatisticsEnv *m_statsEnv;
+
    //--- Internal state
    double m_accountBalance;
    double m_peakEquity;
@@ -91,6 +95,9 @@ private:
 public:
    CRLEnvironment();
    ~CRLEnvironment();
+
+   void SetStatisticsEnv(CStatisticsEnv *stats) { m_statsEnv = stats; }
+
    //--- Core Agent Interface
    bool   Initialize();
    void Configure(int inputSize, double learningRate, double discountFactor, int memorySize);
@@ -159,6 +166,7 @@ CRLEnvironment::CRLEnvironment() {
    m_meta_penalty = 0.1;
    m_riskEnv = new CMonteCarloRiskEnvironment();
    m_aiEnv = new CAILLMTradingEnv();
+   m_statsEnv = NULL;
    m_consecutiveWins = 0;
    m_consecutiveLosses = 0;
    ArrayResize(m_episodic_buffer, MEMORY_CAP);
@@ -299,6 +307,15 @@ RLAction CRLEnvironment::Think(const double &market_features[], const MarketCont
       for(int k=0; k<DIM_MEMORY; k++) context_vec[i] += query_vec[k] * m_semantic_memory[k][i];
    }
 
+   // Meta Learning Context Adjustment
+   double meta_boost = 0.0;
+   if(m_statsEnv != NULL) {
+       PerformanceMetrics metrics = m_statsEnv->GetMetrics();
+       // Increase confidence if recent performance is good
+       if(metrics.profitFactor > 1.5 && metrics.winRate > 0.55) meta_boost = 0.1;
+       if(metrics.maxDrawdown > 500) meta_boost = -0.1;
+   }
+
    // GRPO Sampling
    double votes_buy = 0, votes_sell = 0;
    for(int g=0; g<GRPO_GROUP; g++) {
@@ -325,6 +342,10 @@ RLAction CRLEnvironment::Think(const double &market_features[], const MarketCont
       if(aiDecision.action == SELL_SIGNAL) p_sell += 0.2 * aiDecision.confidence;
       if(s1 > 0.7) p_buy += 0.1;
 
+      // Apply Meta Boost
+      p_buy += meta_boost;
+      p_sell += meta_boost;
+
       if(p_buy > p_sell) votes_buy += p_buy;
       else votes_sell += p_sell;
    }
@@ -334,11 +355,11 @@ RLAction CRLEnvironment::Think(const double &market_features[], const MarketCont
    if(votes_buy > votes_sell) {
       best_action.direction = 1;
       best_action.confidence = votes_buy / GRPO_GROUP;
-      best_action.reasoning = StringFormat("Buy Signal (GRPO + AI Ensemble %.2f)", aiDecision.confidence);
+      best_action.reasoning = StringFormat("Buy Signal (GRPO + AI Ensemble %.2f + Meta)", aiDecision.confidence);
    } else {
       best_action.direction = -1;
       best_action.confidence = votes_sell / GRPO_GROUP;
-      best_action.reasoning = StringFormat("Sell Signal (GRPO + AI Ensemble %.2f)", aiDecision.confidence);
+      best_action.reasoning = StringFormat("Sell Signal (GRPO + AI Ensemble %.2f + Meta)", aiDecision.confidence);
    }
 
    best_action.volume = m_riskEnv->GetOptimalPositionSize(0.5, 1.5, context.volatility);

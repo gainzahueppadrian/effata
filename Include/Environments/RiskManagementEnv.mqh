@@ -5,6 +5,7 @@
 #include "../Core/Structures.mqh"
 #include "../Core/CompatMQL4.mqh"
 #include "../Calendar/EconomicCalendar.mqh"
+#include "StatisticsEnv.mqh"
 
 class CRiskManagementEnv {
 private:
@@ -18,6 +19,9 @@ private:
     double m_runningDrawdown;
     double m_peakEquity;
 
+    // Reference to statistics for adaptive risk
+    CStatisticsEnv *m_statsEnv;
+
 public:
     CRiskManagementEnv(double riskPerTrade = 0.005, bool enableAdaptive = true) {
         m_riskPerTradePercent = riskPerTrade;
@@ -27,11 +31,16 @@ public:
         m_initialEquity = 0;
         m_runningDrawdown = 0;
         m_peakEquity = 0;
+        m_statsEnv = NULL;
     }
 
     ~CRiskManagementEnv() {
         if(CheckPointer(m_monteCarloEnv) == POINTER_DYNAMIC) delete m_monteCarloEnv;
         if(CheckPointer(m_calendar) == POINTER_DYNAMIC) delete m_calendar;
+    }
+
+    void SetStatisticsEnv(CStatisticsEnv *stats) {
+        m_statsEnv = stats;
     }
 
     bool Initialize() {
@@ -43,6 +52,26 @@ public:
 
     RiskAssessment AssessCurrentRisk() {
         RiskAssessment r = m_monteCarloEnv->GetRiskAssessment();
+
+        // Incorporate statistical analysis if available
+        if(m_statsEnv != NULL) {
+            StatisticalAnalysis stats = m_statsEnv->GetStatisticalAnalysis();
+            if(stats.isValid) {
+               if(stats.recommendation == "SYSTEM_FAILING") {
+                   r.allowTrading = false;
+                   r.reason = "Statistical Breakdown (T-Test)";
+                   r.riskScore = 1.0;
+               } else if(stats.recommendation == "POSITIVE_BUT_UNCERTAIN") {
+                   r.riskScore += 0.1; // Slight penalty for uncertainty
+               }
+            }
+
+            PerformanceMetrics metrics = m_statsEnv->GetMetrics();
+            if(metrics.maxDrawdown > 500.0) { // Arbitrary monetary threshold, better to use %
+                r.riskScore += 0.2;
+            }
+        }
+
         if(IsAbnormalVolatility()) {
             r.riskScore += 0.2;
             r.reason += " | Abnormal Volatility";
@@ -71,6 +100,14 @@ public:
 
         // Adjust for event risk
         size *= GetEventRiskMultiplier();
+
+        // Adjust for statistical robustness
+        if(m_statsEnv != NULL) {
+            StatisticalAnalysis stats = m_statsEnv->GetStatisticalAnalysis();
+            if(stats.isValid && stats.confidence < 0.90) {
+                size *= 0.5; // Reduce size if low confidence in system expectancy
+            }
+        }
 
         return size;
     }
