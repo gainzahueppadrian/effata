@@ -1,5 +1,5 @@
 //+------------------------------------------------------------------+
-//| EFFATA-ORCHESTRATOR-HFT-TRADING.mq5                              |
+//| EFFATA_ORCHESTRATOR_HFT_TRADING.mq5                              |
 //| Advanced Multi-Agent Reinforcement Learning Trading System      |
 //| with DeepSeek V3.2 Self-Verification Architecture               |
 //| Copyright 2025, EFFATA Reinforcement Trading Systems             |
@@ -30,10 +30,8 @@
 #include "Include/Core/CompatMQL4.mqh"
 
 // Custom includes
-
 #include "Include/Environments/MonteCarloEnv.mqh"
 #include "Include/Core/NeuralMemoryController.mqh"
-
 #include "Include/Core/Structures.mqh"
 #include "Include/Core/DeepSeekVerification.mqh"
 #include "Include/Environments/MarketExecutionEnv.mqh"
@@ -42,6 +40,13 @@
 #include "Include/Environments/RiskManagementEnv.mqh"
 #include "Include/Environments/StatisticsEnv.mqh"
 #include "Include/Orchestrator/AgentOrchestrator.mqh"
+
+// Helper libs
+#include "Include/Reports/BacktestAnalyzer.mqh"
+#include "Include/Optimization/ParameterOptimizer.mqh"
+#include "Include/Trade/TradeManager.mqh"
+#include "Include/Core/LicenseManager.mqh"
+#include "Include/UI/Dashboard.mqh"
 
 input group "=== MONTE CARLO RISK MANAGEMENT ==="
 input int    InpMonteCarloSimulations  = 1000;   // Number of Monte Carlo simulations
@@ -67,13 +72,15 @@ input int    InpOrderAggression        = 2;      // Order aggression level (1-5)
 input int    InpUpdateFrequencyMs      = 100;    // Update frequency in milliseconds
 
 // Global objects
-
 CAgentOrchestrator    *g_Orchestrator;
 CMarketExecutionEnv   *g_ExecutionEnv;
 CPatternDetectionEnv  *g_PatternEnv;
 CStrategyEnv          *g_StrategyEnv;
 CRiskManagementEnv    *g_RiskEnv;
 CStatisticsEnv        *g_StatsEnv;
+CDashboard            *g_Dashboard;
+CBacktestAnalyzer     *g_BacktestAnalyzer;
+
 double                 g_MarketFeatures[64];
 
 //+------------------------------------------------------------------+
@@ -88,6 +95,12 @@ int OnInit()
     g_StrategyEnv = new CStrategyEnv();
     g_RiskEnv = new CRiskManagementEnv(InpRiskPerTradePercent, InpEnableAdaptiveRisk);
     g_StatsEnv = new CStatisticsEnv();
+    g_Dashboard = new CDashboard("EFFATA ORCHESTRATOR V4.02");
+    g_BacktestAnalyzer = new CBacktestAnalyzer("EFFATA_Report.txt");
+
+    // Wire up environments
+    g_RiskEnv->SetStatisticsEnv(g_StatsEnv);
+    // g_StrategyEnv->SetStatisticsEnv(g_StatsEnv); // If StrategyEnv supports it
 
     // Configure DeepSeek V3.2 Self-Verification
     CDeepSeekVerification::Configure(InpEnableSelfVerification, InpConfidenceThreshold);
@@ -110,19 +123,17 @@ int OnInit()
         return(INIT_FAILED);
     }
 
+    // Initialize UI
+    g_Dashboard->Create();
+
     // Set up timer for HFT updates
     if(InpEnableHFTRouting) {
         EventSetMillisecondTimer(InpUpdateFrequencyMs);
+    } else {
+        EventSetTimer(1);
     }
 
-    // Register trade event handler
-    EventSetTimer(1);
-
-    Print("🚀 EFFATA Orchestrator initialized successfully with DeepSeek V3.2 Self-Verification");
-    Print("🧠 Multi-Agent RL System: Pattern, Strategy, Risk, Execution, Statistics");
-    Print("⚡ HFT Routing: ", InpEnableHFTRouting ? "Enabled" : "Disabled");
-    Print("🛡️ Self-Verification: ", InpEnableSelfVerification ? "Active" : "Inactive");
-
+    Print("🚀 EFFATA Orchestrator initialized successfully with DeepSeek V3.2 Self-Verification & Muon Optimization");
     return(INIT_SUCCEEDED);
 }
 
@@ -131,16 +142,21 @@ int OnInit()
 //+------------------------------------------------------------------+
 void OnDeinit(const int reason)
 {
-    // Clean up timer events
     EventKillTimer();
 
-    // Clean up global objects
+    if(CheckPointer(g_Dashboard) == POINTER_DYNAMIC) {
+       g_Dashboard->Delete();
+       delete g_Dashboard;
+    }
+
+    // Cleanup
     if(CheckPointer(g_Orchestrator) == POINTER_DYNAMIC) delete g_Orchestrator;
     if(CheckPointer(g_ExecutionEnv) == POINTER_DYNAMIC) delete g_ExecutionEnv;
     if(CheckPointer(g_PatternEnv) == POINTER_DYNAMIC) delete g_PatternEnv;
     if(CheckPointer(g_StrategyEnv) == POINTER_DYNAMIC) delete g_StrategyEnv;
     if(CheckPointer(g_RiskEnv) == POINTER_DYNAMIC) delete g_RiskEnv;
     if(CheckPointer(g_StatsEnv) == POINTER_DYNAMIC) delete g_StatsEnv;
+    if(CheckPointer(g_BacktestAnalyzer) == POINTER_DYNAMIC) delete g_BacktestAnalyzer;
 
     Print("🛑 EFFATA Orchestrator deinitialized");
 }
@@ -150,13 +166,15 @@ void OnDeinit(const int reason)
 //+------------------------------------------------------------------+
 void OnTick()
 {
-    // Skip processing if market is closed
     if(!IsMarketOpen()) return;
 
-    // Feature engineering - extract market features
+    // Extract Features
     ExtractMarketFeatures(g_MarketFeatures);
 
-    // Continual learning update from latest tick
+    // Update Dashboard
+    UpdateDashboardInfo();
+
+    // Continual Learning Update
     if(InpEnableContinualLearning) {
         g_PatternEnv->UpdateFromTick(g_MarketFeatures);
         g_StrategyEnv->UpdateFromTick(g_MarketFeatures);
@@ -164,7 +182,7 @@ void OnTick()
         g_ExecutionEnv->UpdateFromTick(g_MarketFeatures);
     }
 
-    // DeepSeek V3.2 Self-Verification process for each environment
+    // Self-Verification
     if(InpEnableSelfVerification) {
         g_PatternEnv->SelfVerify(g_MarketFeatures);
         g_StrategyEnv->SelfVerify(g_MarketFeatures);
@@ -172,29 +190,23 @@ void OnTick()
         g_ExecutionEnv->SelfVerify(g_MarketFeatures);
     }
 
-    // Risk check before proceeding with any decision
+    // Risk Monitor
     if(!g_ExecutionEnv->MonitorRiskAndEquity()) {
-        Print("⚠️ Risk threshold exceeded. Skipping trading decision.");
         return;
     }
 
-    // Get trade decision from orchestrator
-    // Note: Orchestrator needs to be adapted to use the passed environments or logic.
-    // The current AgentOrchestrator implementation seems to have its own internal agents.
-    // I should probably unify them.
+    // Get Decision from Orchestrator (which uses RL Agent)
     TradeDecision decision = g_Orchestrator->GetTradingDecision(g_MarketFeatures);
 
-    // Execute decision if approved and confident enough
+    // Execution Logic
     if(decision.action != NO_SIGNAL && decision.confidence >= InpConfidenceThreshold) {
         g_ExecutionEnv->ExecuteDecision(decision);
-
-        // Update statistics with the decision
         if(decision.action != NO_SIGNAL) {
             g_StatsEnv->RecordTradeDecision(decision);
         }
     }
 
-    // Periodic memory consolidation
+    // Periodic Memory Consolidation
     static int memoryCounter = 0;
     if(++memoryCounter >= 100) {
         g_PatternEnv->ConsolidateMemory();
@@ -206,21 +218,15 @@ void OnTick()
 }
 
 //+------------------------------------------------------------------+
-//| Timer function - for periodic tasks                              |
+//| Timer event                                                      |
 //+------------------------------------------------------------------+
-void OnTimer()
-{
-    // Update statistics periodically
+void OnTimer() {
     g_StatsEnv->UpdatePerformanceMetrics();
 
-    // Check for market session changes
     static string lastSession = "";
     string currentSession = GetMarketSession();
     if(lastSession != currentSession) {
-        Print("💱 Market session changed: ", lastSession, " → ", currentSession);
         lastSession = currentSession;
-
-        // Notify all environments about session change
         MarketContext context;
         context.sessionType = currentSession;
         g_PatternEnv->OnSessionChange(context);
@@ -228,206 +234,83 @@ void OnTimer()
         g_RiskEnv->OnSessionChange(context);
         g_ExecutionEnv->OnSessionChange(context);
     }
-
-    // Daily statistics report
-    static datetime lastReportTime = 0;
-    datetime now = TimeCurrent();
-    if(TimeDay(now) != TimeDay(lastReportTime)) {
-        string report = g_StatsEnv->GenerateDailyReport();
-        Print("📊 DAILY PERFORMANCE REPORT:\n", report);
-        lastReportTime = now;
-    }
 }
 
 //+------------------------------------------------------------------+
-//| Trade transaction handler                                        |
+//| Trade Transaction                                                |
 //+------------------------------------------------------------------+
 void OnTradeTransaction(const MqlTradeTransaction& trans,
                         const MqlTradeRequest& request,
-                        const MqlTradeResult& result)
-{
-    // Process trade transaction through execution environment
-    if(CheckPointer(g_ExecutionEnv) == POINTER_DYNAMIC) {
-        g_ExecutionEnv->OnTradeTransaction(trans, request, result);
-    }
-
-    // Update statistics with transaction results
-    if(CheckPointer(g_StatsEnv) == POINTER_DYNAMIC) {
-        g_StatsEnv->OnTradeTransaction(trans, request, result);
-    }
-
-    // Use trade result for continual learning
-    if(InpEnableContinualLearning && trans.type == TRADE_TRANSACTION_DEAL_ADD) {
-        double reward = CalculateTradeReward(trans, result);
-        MarketContext context;
-        context.currentPrice = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-        context.volatility = CalculateVolatility();
-
-        // Update all environments with trade result
-        g_PatternEnv->LearnFromTrade(reward, context);
-        g_StrategyEnv->LearnFromTrade(reward, context);
-        g_RiskEnv->LearnFromTrade(reward, context);
-        g_ExecutionEnv->LearnFromTrade(reward, context);
-    }
+                        const MqlTradeResult& result) {
+    if(g_ExecutionEnv) g_ExecutionEnv->OnTradeTransaction(trans, request, result);
+    if(g_StatsEnv) g_StatsEnv->OnTradeTransaction(trans, request, result);
+    if(g_BacktestAnalyzer) g_BacktestAnalyzer->OnTradeTransaction(trans);
 }
 
 //+------------------------------------------------------------------+
-//| Extract market features for all environments                     |
+//| Helper: Update Dashboard                                         |
 //+------------------------------------------------------------------+
-void ExtractMarketFeatures(double &features[])
-{
-    // Clear features array
-    ArrayInitialize(features, 0.0);
+void UpdateDashboardInfo() {
+    if(!g_Dashboard) return;
 
-    // Market context features
+    RiskAssessment risk = g_RiskEnv->AssessCurrentRisk();
+    PerformanceMetrics metrics = g_StatsEnv->GetMetrics();
+
+    g_Dashboard->Update(
+        "N/A", // Daily Bias (need source)
+        "N/A", // H4 Bias
+        "N/A", // PO3 Phase
+        risk.allowTrading,
+        (int)(metrics.winRate * 100),
+        (int)metrics.totalTrades
+    );
+}
+
+//+------------------------------------------------------------------+
+//| Helper: Extract Features                                         |
+//+------------------------------------------------------------------+
+void ExtractMarketFeatures(double &features[]) {
+    // Basic extraction
+    ArrayInitialize(features, 0.0);
     features[0] = iClose(_Symbol, PERIOD_CURRENT, 0);
     features[1] = iOpen(_Symbol, PERIOD_CURRENT, 0);
     features[2] = iHigh(_Symbol, PERIOD_CURRENT, 0);
     features[3] = iLow(_Symbol, PERIOD_CURRENT, 0);
-    features[4] = iVolume(_Symbol, PERIOD_CURRENT, 0);
+    features[4] = (double)iVolume(_Symbol, PERIOD_CURRENT, 0);
 
-    // Technical indicators
-    features[5] = iRSI(_Symbol, PERIOD_CURRENT, 14, PRICE_CLOSE, 0) / 100.0; // Normalized RSI
-    features[6] = iATR(_Symbol, PERIOD_CURRENT, 14, 0) / features[0]; // Normalized ATR
+    // Add indicators
+    features[5] = iRSI(_Symbol, PERIOD_CURRENT, 14, PRICE_CLOSE, 0) / 100.0;
 
-    // Moving averages
-    double maFast = iMA(_Symbol, PERIOD_CURRENT, 9, 0, MODE_EMA, PRICE_CLOSE, 0);
-    double maSlow = iMA(_Symbol, PERIOD_CURRENT, 21, 0, MODE_EMA, PRICE_CLOSE, 0);
-    features[7] = (maFast - maSlow) / features[0]; // MACD proxy
-
-    // Volatility features
-    double stdDev = CalculateVolatility();
-    features[8] = stdDev;
-
-    // Market session encoding
-    MqlDateTime dt;
-    TimeToStruct(TimeCurrent(), dt);
-    double hourAngle = (dt.hour + dt.min/60.0) * 2 * M_PI / 24.0;
-    features[9] = MathSin(hourAngle); // Cyclic hour encoding
-    features[10] = MathCos(hourAngle);
-
-    // Pattern detection features
+    // Patterns
     PatternResult pattern = g_PatternEnv->DetectPatterns();
     features[11] = pattern.patternStrength;
     features[12] = pattern.confidence;
-    features[13] = pattern.crtSignal ? 1.0 : 0.0;
-    features[14] = pattern.po3Signal ? 1.0 : 0.0;
-    features[15] = pattern.turtleSoup ? 1.0 : 0.0;
 
-    // Risk context features
+    // Risk
     RiskAssessment risk = g_RiskEnv->AssessCurrentRisk();
     features[16] = risk.riskScore;
-    features[17] = AccountInfoDouble(ACCOUNT_EQUITY) / AccountInfoDouble(ACCOUNT_BALANCE);
 
-    // Liquidity features
+    // Liquidity
     features[18] = g_ExecutionEnv->GetLiquidityScore();
-
-    // Time-based features
-    features[19] = (double)TimeDayOfWeek(TimeCurrent()) / 7.0; // Day of week
-
-    // Normalize features
-    NormalizeFeatures(features);
 }
 
 //+------------------------------------------------------------------+
-//| Normalize feature vector                                          |
+//| Helper: Get Session                                              |
 //+------------------------------------------------------------------+
-void NormalizeFeatures(double &features[])
-{
-    for(int i = 0; i < ArraySize(features); i++) {
-        // Simple min-max normalization for demonstration
-        double minVal = -1.0;
-        double maxVal = 1.0;
-        if(features[i] < minVal) features[i] = minVal;
-        if(features[i] > maxVal) features[i] = maxVal;
-    }
-}
-
-//+------------------------------------------------------------------+
-//| Calculate volatility metric                                       |
-//+------------------------------------------------------------------+
-double CalculateVolatility()
-{
-    int period = 20;
-    double sum = 0.0, sumSq = 0.0;
-    for(int i = 0; i < period; i++) {
-        double close = iClose(_Symbol, PERIOD_CURRENT, i);
-        double prevClose = iClose(_Symbol, PERIOD_CURRENT, i+1);
-        double ret = MathLog(close / prevClose);
-        sum += ret;
-        sumSq += ret * ret;
-    }
-    double mean = sum / period;
-    double variance = (sumSq / period) - (mean * mean);
-    return MathSqrt(variance);
-}
-
-//+------------------------------------------------------------------+
-//| Calculate reward for continual learning                           |
-//+------------------------------------------------------------------+
-double CalculateTradeReward(const MqlTradeTransaction &trans, const MqlTradeResult &result)
-{
-    if(trans.deal_type != DEAL_TYPE_BUY && trans.deal_type != DEAL_TYPE_SELL) {
-        return 0.0;
-    }
-
-    double positionSize = trans.volume;
-    double entryPrice = trans.price;
-    double currentPrice = (trans.deal_type == DEAL_TYPE_BUY) ?
-        SymbolInfoDouble(_Symbol, SYMBOL_BID) :
-        SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-
-    double profit = 0.0;
-    if(trans.deal_type == DEAL_TYPE_BUY) {
-        profit = (currentPrice - entryPrice) * positionSize / _Point;
-    } else {
-        profit = (entryPrice - currentPrice) * positionSize / _Point;
-    }
-
-    // Normalize reward by account balance
-    double balance = AccountInfoDouble(ACCOUNT_BALANCE);
-    double normalizedReward = profit / (balance * 0.01); // Per 1% of account
-
-    // Add risk-adjusted component
-    RiskAssessment risk = g_RiskEnv->AssessCurrentRisk();
-    double riskAdjustedReward = normalizedReward * (1.0 - risk.riskScore);
-
-    return riskAdjustedReward;
-}
-
-//+------------------------------------------------------------------+
-//| Check if market is open                                            |
-//+------------------------------------------------------------------+
-bool IsMarketOpen()
-{
+string GetMarketSession() {
     MqlDateTime dt;
     TimeToStruct(TimeCurrent(), dt);
-
-    // Weekend check
-    if(dt.day_of_week == 0 || dt.day_of_week == 6) {
-        return false;
-    }
-
-    // Session hours (simplified)
-    int currentHour = dt.hour;
-    return (currentHour >= 0 && currentHour <= 23); // 24h market for forex
+    int h = dt.hour;
+    if(h < 8) return "ASIA";
+    if(h < 16) return "LONDON";
+    return "NEW_YORK";
 }
 
 //+------------------------------------------------------------------+
-//| Get current market session                                         |
+//| Helper: Is Market Open                                           |
 //+------------------------------------------------------------------+
-string GetMarketSession()
-{
+bool IsMarketOpen() {
     MqlDateTime dt;
     TimeToStruct(TimeCurrent(), dt);
-    int utcHour = dt.hour;
-
-    // Adjust for broker timezone if needed
-    // This is simplified - real implementation would handle UTC offsets
-
-    if((utcHour >= 0 && utcHour < 8)) return "ASIA";
-    if((utcHour >= 7 && utcHour < 16)) return "LONDON";
-    if((utcHour >= 12 && utcHour < 21)) return "NEW_YORK";
-    if((utcHour >= 7 && utcHour < 9) || (utcHour >= 15 && utcHour < 17)) return "OVERLAP";
-    return "OFF_PEAK";
+    return (dt.day_of_week != 0 && dt.day_of_week != 6);
 }
