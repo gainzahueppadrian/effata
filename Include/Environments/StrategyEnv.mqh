@@ -1,103 +1,63 @@
 //+------------------------------------------------------------------+
 //| StrategyEnv.mqh                                                  |
 //| Strategy Environment for EFFATA Orchestrator                     |
-//| Wraps CRLEnvironment for strategy decision making                |
+//| Copyright 2025, EFFATA Reinforcement Trading Systems             |
 //+------------------------------------------------------------------+
 #property copyright "2025, EFFATA Reinforcement Trading Systems"
 #property version   "3.20"
+#property strict
 
-#ifndef STRATEGY_ENV_MQH
-#define STRATEGY_ENV_MQH
-
-#include "../RL/RLEnvironment.mqh"
 #include "../Core/Structures.mqh"
-#include "../Core/DeepSeekVerification.mqh"
+#include "../Strategies/BillionaireStrategies.mqh"
 
 class CStrategyEnv {
 private:
-    CRLEnvironment *m_rlAgent;
+   // Strategies
+   StrategyPivotsDay *m_stratPivotsDay;
+   StrategyPivotsH4FibonacciR1S1Reversal *m_stratH4Rev;
+
+   // Internal State
+   double m_currentConfidence;
 
 public:
-    CStrategyEnv() {
-        m_rlAgent = new CRLEnvironment();
-    }
+   CStrategyEnv() {
+      m_stratPivotsDay = new StrategyPivotsDay();
+      m_stratH4Rev = new StrategyPivotsH4FibonacciR1S1Reversal();
+   }
 
-    ~CStrategyEnv() {
-        if(CheckPointer(m_rlAgent) == POINTER_DYNAMIC) delete m_rlAgent;
-    }
+   ~CStrategyEnv() {
+      delete m_stratPivotsDay;
+      delete m_stratH4Rev;
+   }
 
-    bool Initialize() {
-        return m_rlAgent->Initialize();
-    }
+   bool Initialize() {
+      return true;
+   }
 
-    void UpdateFromTick(const double &features[]) {
-        // Update RL agent's internal state if needed (e.g. time decay)
-        // RLEnvironment might not expose a direct UpdateFromTick, but we can simulate it
-        // For now, empty as RLEnvironment is request-driven via Think()
-    }
+   void UpdateFromTick(const double &features[]) {
+      m_stratPivotsDay->Calculate();
+      m_stratH4Rev->Calculate();
+   }
 
-    TradeDecision GetTradingDecision(const double &features[], const MarketContext &context) {
-        // Convert input features to RL features
-        double rlFeatures[DIM_FEATURES];
-        ArrayCopy(rlFeatures, features, 0, 0, MathMin(ArraySize(features), DIM_FEATURES));
+   // Self-Verification logic for strategies
+   void SelfVerify(const double &features[]) {
+      // Check consistency
+   }
 
-        // Use RLEnvironment logic
-        RLAction rlAction = m_rlAgent->Think(rlFeatures, context);
+   void ConsolidateMemory() {
+      // Clean up old signals
+   }
 
-        // Convert RLAction to TradeDecision
-        TradeDecision decision;
-        decision.Initialize();
+   void OnSessionChange(const MarketContext &context) {
+      // Adjust strategy parameters based on session
+   }
 
-        if(rlAction.direction == 1) decision.action = BUY_SIGNAL;
-        else if(rlAction.direction == -1) decision.action = SELL_SIGNAL;
-        else decision.action = NO_SIGNAL;
+   // Get combined signal
+   int GetSignal() {
+      int s1 = m_stratPivotsDay->GetSignal();
+      int s2 = m_stratH4Rev->GetSignal();
 
-        decision.positionSize = rlAction.volume;
-        decision.confidence = rlAction.confidence;
-        decision.reasoning = rlAction.reasoning;
-        decision.stopLoss = rlAction.stopLoss;
-        decision.takeProfit = rlAction.takeProfit;
-        decision.riskReward = rlAction.riskReward;
-        decision.source_agent = STRATEGY_AGENT;
-
-        return decision;
-    }
-
-    void SelfVerify(const double &features[]) {
-        // RLEnvironment already does verification in Think()
-        // But we can do an extra check here if needed
-        string reasoning;
-        TradeDecision dummyDecision;
-        dummyDecision.Initialize();
-        CDeepSeekVerification::VerifyDecision(dummyDecision, features, reasoning);
-    }
-
-    void ConsolidateMemory() {
-        // Trigger memory maintenance in RL Agent
-        m_rlAgent->UpdateMemory(NULL, 0.0, NULL); // Hacky if UpdateMemory signature mismatches.
-        // Actually RLEnvironment::UpdateMemory takes (state, reward, context).
-        // We need a proper maintenance method in RLEnvironment or ignore.
-        // Or implement a new method in RLEnvironment.
-        // Given constraints, we will leave this as a lightweight maintenance call if possible.
-    }
-
-    void LearnFromTrade(double reward, const MarketContext &context) {
-        // We need the state that led to this reward.
-        // In a real implementation, we would store the last state-action pair.
-        // Here we pass a dummy state or the current state as approximation if immediate
-        double dummyState[DIM_FEATURES];
-        ArrayInitialize(dummyState, 0.0);
-
-        // Map reward to action (simplified, assumes last action was the one being rewarded)
-        // This is a limitation of the interface mismatch.
-        // Ideal: Orchestrator tracks state/action and calls Learn with them.
-
-        m_rlAgent->Learn(dummyState, 0, reward, context);
-    }
-
-    void OnSessionChange(const MarketContext &context) {
-        // Notify RL agent if it has session handling
-        // Currently RLEnvironment doesn't have explicit session handler but uses context in Think
-    }
+      if(s1 == s2) return s1;
+      return 0; // Conflict
+   }
 };
-#endif // STRATEGY_ENV_MQH
