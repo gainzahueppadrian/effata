@@ -21,8 +21,15 @@
 #include "../Environments/StatisticsEnv.mqh"
 #include "../Memory/MuonOptimizer.mqh"
 
+// New Features Integration
+#include "../Indicators/AndeanOscillator.mqh"
+#include "../Indicators/VWAP.mqh"
+#include "../Indicators/Fibonacci.mqh"
+#include "../ICT/ICTFramework.mqh"
+#include "../Patterns/CRTTheory.mqh"
+
 //--- Hyperparameters
-#define DIM_FEATURES 128    // Expanded Feature Vector Size
+#define DIM_FEATURES 256    // Expanded Feature Vector Size
 #define DIM_MEMORY   32     // Memory Embedding Size
 #define DIM_HIDDEN   64     // Hidden Layer Size
 #define MEMORY_CAP   100    // Episodic Memory Capacity
@@ -80,6 +87,13 @@ private:
    //--- Statistics for Meta-Learning
    CStatisticsEnv *m_statsEnv;
 
+   //--- New Indicators
+   CAndeanOscillator *m_andean;
+   CVWAP *m_vwap;
+   CFibonacci *m_fibo;
+   ICTFramework *m_ict;
+   CCRTTheory *m_crt;
+
    //--- Internal state
    double m_accountBalance;
    double m_peakEquity;
@@ -130,6 +144,9 @@ public:
    //--- Diagnosis
    string GetMemoryStatus();
    string GetRiskStatus();
+
+   // New: Feature Engineering
+   void EnhanceFeatures(double &features[]);
 
    // Helper for GetDecision
    TradeDecision GetDecision(const MarketData &data) {
@@ -187,6 +204,13 @@ CRLEnvironment::CRLEnvironment() {
    m_statsEnv = NULL;
    m_consecutiveWins = 0;
    m_consecutiveLosses = 0;
+
+   m_andean = new CAndeanOscillator(_Symbol, PERIOD_CURRENT);
+   m_vwap = new CVWAP(_Symbol, PERIOD_CURRENT);
+   m_fibo = new CFibonacci(_Symbol, PERIOD_CURRENT);
+   m_ict = new ICTFramework();
+   m_crt = new CCRTTheory(_Symbol);
+
    ArrayResize(m_episodic_buffer, MEMORY_CAP);
 }
 CRLEnvironment::~CRLEnvironment() {
@@ -194,6 +218,12 @@ CRLEnvironment::~CRLEnvironment() {
    if(CheckPointer(m_riskEnv) == POINTER_DYNAMIC) delete m_riskEnv;
    if(CheckPointer(m_aiEnv) == POINTER_DYNAMIC) delete m_aiEnv;
    if(CheckPointer(m_optimizer) == POINTER_DYNAMIC) delete m_optimizer;
+
+   if(CheckPointer(m_andean) == POINTER_DYNAMIC) delete m_andean;
+   if(CheckPointer(m_vwap) == POINTER_DYNAMIC) delete m_vwap;
+   if(CheckPointer(m_fibo) == POINTER_DYNAMIC) delete m_fibo;
+   if(CheckPointer(m_ict) == POINTER_DYNAMIC) delete m_ict;
+   if(CheckPointer(m_crt) == POINTER_DYNAMIC) delete m_crt;
 }
 bool CRLEnvironment::Initialize() {
    MathSrand(GetMicrosecondCount());
@@ -234,7 +264,7 @@ bool CRLEnvironment::Initialize() {
    m_peakEquity = AccountInfoDouble(ACCOUNT_EQUITY);
    m_dailyStartingEquity = AccountInfoDouble(ACCOUNT_EQUITY);
    m_lastResetTime = TimeCurrent();
-   Print("✅ DeepSeek-V2 RL Environment initialized with Muon Optimizer");
+   Print("✅ DeepSeek-V2 RL Environment initialized with Muon Optimizer & Enhanced Features");
    return true;
 }
 
@@ -299,6 +329,53 @@ void CRLEnvironment::CalculateMultiEMAFeatures(double &features[]) {
 }
 
 //+------------------------------------------------------------------+
+//| Enhance Features with New Indicators and Stats                   |
+//+------------------------------------------------------------------+
+void CRLEnvironment::EnhanceFeatures(double &features[]) {
+    // 1. Statistics (Meta Learning)
+    if(m_statsEnv != NULL) {
+        PerformanceMetrics pm = m_statsEnv->GetMetrics();
+        if(30 < DIM_FEATURES) features[30] = pm.winRate;
+        if(31 < DIM_FEATURES) features[31] = pm.profitFactor / 10.0; // Normalize
+        if(32 < DIM_FEATURES) features[32] = pm.drawdownPercent;
+        if(33 < DIM_FEATURES) features[33] = pm.totalTrades / 1000.0;
+
+        // Rolling Win Rate (Recent)
+        if(34 < DIM_FEATURES) features[34] = (m_consecutiveWins > 0) ? 1.0 : -1.0;
+    }
+
+    // 2. Andean Oscillator
+    double bull, bear;
+    int andean_signal = m_andean->Calculate(bull, bear);
+    if(40 < DIM_FEATURES) features[40] = bull;
+    if(41 < DIM_FEATURES) features[41] = bear;
+    if(42 < DIM_FEATURES) features[42] = (double)andean_signal;
+
+    // 3. VWAP
+    double vwap_dev = m_vwap->GetDeviation();
+    if(45 < DIM_FEATURES) features[45] = vwap_dev;
+
+    // 4. Fibonacci
+    double fib_dist = m_fibo->GetNearestGoldenLevelDist();
+    if(46 < DIM_FEATURES) features[46] = fib_dist;
+
+    // 5. ICT Framework
+    m_ict->Update(_Symbol);
+    bool inFVG = m_ict->IsPriceInFVG(iClose(_Symbol, PERIOD_CURRENT, 0));
+    double nearestOB = m_ict->GetNearestValidOrderBlock(iClose(_Symbol, PERIOD_CURRENT, 0), true);
+    if(50 < DIM_FEATURES) features[50] = inFVG ? 1.0 : 0.0;
+    if(51 < DIM_FEATURES) features[51] = (nearestOB > 0) ? (iClose(_Symbol, PERIOD_CURRENT, 0) - nearestOB) : 0.0;
+
+    HTFBias bias = m_ict->GetHTFBias();
+    if(52 < DIM_FEATURES) features[52] = (bias.dailyBias == "BULLISH") ? 1.0 : -1.0;
+
+    // 6. CRT Theory
+    m_crt->Calculate(0);
+    if(60 < DIM_FEATURES) features[60] = m_crt->isLarge ? 1.0 : 0.0;
+    if(61 < DIM_FEATURES) features[61] = m_crt->isOutside ? 1.0 : 0.0;
+}
+
+//+------------------------------------------------------------------+
 //| Multi-Latent Attention Mechanism                                 |
 //+------------------------------------------------------------------+
 void CRLEnvironment::ApplyMultiLatentAttention(const double &input_features[], double &context_vec[]) {
@@ -357,8 +434,14 @@ RLAction CRLEnvironment::Think(const double &market_features[], const MarketCont
 
    // Enhance features with internal calculations
    double enhanced_features[DIM_FEATURES];
+   ArrayInitialize(enhanced_features, 0.0);
+   // Copy base features
    ArrayCopy(enhanced_features, market_features, 0, 0, MathMin(ArraySize(market_features), DIM_FEATURES));
+
+   // Add MultiEMA features
    CalculateMultiEMAFeatures(enhanced_features);
+   // Add Advanced Indicators & Stats features
+   EnhanceFeatures(enhanced_features);
 
    // Evaluate AI Ensemble Recommendation
    MarketData dummyData;

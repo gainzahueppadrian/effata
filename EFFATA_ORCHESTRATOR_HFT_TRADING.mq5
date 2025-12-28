@@ -48,6 +48,13 @@
 #include "Include/Core/LicenseManager.mqh"
 #include "Include/UI/Dashboard.mqh"
 
+// New Indicators
+#include "Include/Indicators/AndeanOscillator.mqh"
+#include "Include/Indicators/VWAP.mqh"
+#include "Include/Indicators/Fibonacci.mqh"
+#include "Include/ICT/ICTFramework.mqh"
+#include "Include/Patterns/CRTTheory.mqh"
+
 input group "=== MONTE CARLO RISK MANAGEMENT ==="
 input int    InpMonteCarloSimulations  = 1000;   // Number of Monte Carlo simulations
 input int    InpMonteCarloObservations = 1000;   // Observations per simulation
@@ -81,7 +88,14 @@ CStatisticsEnv        *g_StatsEnv;
 CDashboard            *g_Dashboard;
 CBacktestAnalyzer     *g_BacktestAnalyzer;
 
-double                 g_MarketFeatures[64];
+// Indicators
+CAndeanOscillator     *g_Andean;
+CVWAP                 *g_VWAP;
+CFibonacci            *g_Fibo;
+ICTFramework          *g_ICT;
+CCRTTheory            *g_CRT;
+
+double                 g_MarketFeatures[256];
 
 //+------------------------------------------------------------------+
 //| Expert initialization function                                   |
@@ -97,6 +111,13 @@ int OnInit()
     g_StatsEnv = new CStatisticsEnv();
     g_Dashboard = new CDashboard("EFFATA ORCHESTRATOR V4.02");
     g_BacktestAnalyzer = new CBacktestAnalyzer("EFFATA_Report.txt");
+
+    // Initialize Indicators
+    g_Andean = new CAndeanOscillator(_Symbol, PERIOD_CURRENT);
+    g_VWAP = new CVWAP(_Symbol, PERIOD_CURRENT);
+    g_Fibo = new CFibonacci(_Symbol, PERIOD_CURRENT);
+    g_ICT = new ICTFramework();
+    g_CRT = new CCRTTheory(_Symbol);
 
     // Wire up environments
     g_RiskEnv->SetStatisticsEnv(g_StatsEnv);
@@ -157,6 +178,13 @@ void OnDeinit(const int reason)
     if(CheckPointer(g_RiskEnv) == POINTER_DYNAMIC) delete g_RiskEnv;
     if(CheckPointer(g_StatsEnv) == POINTER_DYNAMIC) delete g_StatsEnv;
     if(CheckPointer(g_BacktestAnalyzer) == POINTER_DYNAMIC) delete g_BacktestAnalyzer;
+
+    // Cleanup Indicators
+    if(CheckPointer(g_Andean) == POINTER_DYNAMIC) delete g_Andean;
+    if(CheckPointer(g_VWAP) == POINTER_DYNAMIC) delete g_VWAP;
+    if(CheckPointer(g_Fibo) == POINTER_DYNAMIC) delete g_Fibo;
+    if(CheckPointer(g_ICT) == POINTER_DYNAMIC) delete g_ICT;
+    if(CheckPointer(g_CRT) == POINTER_DYNAMIC) delete g_CRT;
 
     Print("🛑 EFFATA Orchestrator deinitialized");
 }
@@ -292,6 +320,36 @@ void ExtractMarketFeatures(double &features[]) {
 
     // Liquidity
     features[18] = g_ExecutionEnv->GetLiquidityScore();
+
+    // NEW FEATURES FROM LIBRARIES
+    // Andean Oscillator
+    double bull, bear;
+    int andeanSignal = g_Andean->Calculate(bull, bear);
+    features[40] = bull;
+    features[41] = bear;
+    features[42] = (double)andeanSignal;
+
+    // VWAP
+    features[45] = g_VWAP->GetDeviation();
+
+    // Fibonacci
+    features[46] = g_Fibo->GetNearestGoldenLevelDist();
+
+    // ICT Features
+    g_ICT->Update(_Symbol);
+    bool inFVG = g_ICT->IsPriceInFVG(features[0]);
+    features[50] = inFVG ? 1.0 : 0.0;
+
+    // CRT Theory
+    g_CRT->Calculate(0);
+    features[60] = g_CRT->isLarge ? 1.0 : 0.0;
+    features[61] = g_CRT->isOutside ? 1.0 : 0.0;
+
+    // Statistics Features
+    PerformanceMetrics pm = g_StatsEnv->GetMetrics();
+    features[30] = pm.winRate;
+    features[31] = pm.profitFactor;
+    features[32] = pm.drawdownPercent;
 }
 
 //+------------------------------------------------------------------+
