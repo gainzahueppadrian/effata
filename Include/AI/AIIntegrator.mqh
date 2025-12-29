@@ -31,6 +31,8 @@ public:
       string targetModel = modelName;
       if(modelName == "gpt-4") targetModel = "chatgpt-4o-latest-20250326";
       if(modelName == "deepseek-v3") targetModel = "deepseek-chat";
+      if(modelName == "deepseek-v3.2") targetModel = "deepseek-v3.2";
+      if(modelName == "grok-4.20") targetModel = "grok-4.20";
 
       return CallPythonServer(targetModel, prompt);
    }
