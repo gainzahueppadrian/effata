@@ -16,6 +16,7 @@
 #include <Arrays/ArrayObj.mqh>
 #include "../Core/CompatMQL4.mqh"
 #include "../Environments/MonteCarloEnv.mqh"
+#include "../Environments/RiskManagementEnv.mqh"
 #include "../Core/Structures.mqh"
 #include "../Environments/AILLMTradingEnv.mqh"
 #include "../Environments/StatisticsEnv.mqh"
@@ -80,7 +81,7 @@ private:
    CMuonOptimizer *m_optimizer;
 
    //--- Risk Management System
-   CMonteCarloRiskEnvironment *m_riskEnv;
+   CRiskManagementEnv *m_riskEnv;
    //--- AI Trading Environment
    CAILLMTradingEnv *m_aiEnv;
 
@@ -126,7 +127,10 @@ public:
    CRLEnvironment();
    ~CRLEnvironment();
 
-   void SetStatisticsEnv(CStatisticsEnv *stats) { m_statsEnv = stats; }
+   void SetStatisticsEnv(CStatisticsEnv *stats) {
+       m_statsEnv = stats;
+       if(m_riskEnv != NULL) m_riskEnv->SetStatisticsEnv(stats);
+   }
 
    //--- Core Agent Interface
    bool   Initialize();
@@ -147,6 +151,11 @@ public:
 
    // New: Feature Engineering
    void EnhanceFeatures(double &features[]);
+
+   // Configure Prop Firm
+   void ConfigurePropFirmRules(EnumPropFirmType type) {
+       if(m_riskEnv) m_riskEnv->ConfigurePropFirm(type);
+   }
 
    // Helper for GetDecision
    TradeDecision GetDecision(const MarketData &data) {
@@ -180,6 +189,8 @@ public:
        d.confidence = action.confidence;
        d.reasoning = action.reasoning;
        d.positionSize = action.volume;
+       d.stopLoss = action.stopLoss;
+       d.takeProfit = action.takeProfit;
 
        return d;
    }
@@ -198,7 +209,10 @@ CRLEnvironment::CRLEnvironment() {
    m_memory_ptr = 0;
    m_learning_rate = 0.001;
    m_meta_penalty = 0.1;
-   m_riskEnv = new CMonteCarloRiskEnvironment();
+
+   // Use the new Enhanced Risk Management Env
+   m_riskEnv = new CRiskManagementEnv(0.01, true); // 1% risk default, adaptive
+
    m_aiEnv = new CAILLMTradingEnv();
    m_optimizer = new CMuonOptimizer(m_learning_rate);
    m_statsEnv = NULL;
@@ -228,7 +242,7 @@ CRLEnvironment::~CRLEnvironment() {
 bool CRLEnvironment::Initialize() {
    MathSrand(GetMicrosecondCount());
    if(!m_riskEnv->Initialize()) {
-      Print("❌ Failed to initialize Monte Carlo Risk Environment");
+      Print("❌ Failed to initialize Risk Environment");
       return false;
    }
    // Xavier Initialization
@@ -427,9 +441,12 @@ void CRLEnvironment::ApplyMultiLatentAttention(const double &input_features[], d
 //+------------------------------------------------------------------+
 RLAction CRLEnvironment::Think(const double &market_features[], const MarketContext &context) {
    ResetDailyMetrics();
+   m_riskEnv->UpdateFromTick(market_features); // Check prop firm rules every tick
+
    RiskAssessment riskAssessment = m_riskEnv->GetRiskAssessment();
    if(!riskAssessment.allowTrading) {
-      RLAction action; action.Initialize(); action.reasoning = "Risk Block"; return action;
+      RLAction action; action.Initialize(); action.reasoning = "Risk/PropFirm Block";
+      return action; // Stop logic
    }
 
    // Enhance features with internal calculations
@@ -515,7 +532,8 @@ RLAction CRLEnvironment::Think(const double &market_features[], const MarketCont
       best_action.reasoning = StringFormat("Sell Signal (GRPO + Latent Attention + AI Ensemble %.2f + Meta)", aiDecision.confidence);
    }
 
-   best_action.volume = m_riskEnv->GetOptimalPositionSize(0.5, 1.5, context.volatility);
+   // Calculate optimal position size using Risk Environment
+   best_action.volume = m_riskEnv->GetOptimalPositionSize(best_action.confidence, 2.0, context.volatility);
    best_action.volume = MathMin(MAX_POSITION_SIZE, best_action.volume);
 
    double tpLevels[];
