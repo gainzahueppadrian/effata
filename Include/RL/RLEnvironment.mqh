@@ -123,6 +123,7 @@ private:
 
    FundingAccountRules m_fundingRules;
    CAIIntegrator *m_aiIntegrator;
+   datetime m_lastAnalysisTime;
 
    //--- Internal Helpers
    double ActivationSwish(double x) { return x / (1.0 + MathExp(-x)); }
@@ -292,6 +293,7 @@ bool CRLEnvironment::Initialize() {
    m_dailyStartingEquity = AccountInfoDouble(ACCOUNT_EQUITY);
    m_fundingRules.Initialize(m_accountBalance); // Initialize funding rules
    m_lastResetTime = TimeCurrent();
+   m_lastAnalysisTime = 0;
    Print("✅ DeepSeek-V2 RL Environment initialized with Muon Optimizer & Enhanced Features");
    return true;
 }
@@ -666,13 +668,30 @@ bool CRLEnvironment::CheckFundingRules(const MarketContext &context) {
 void CRLEnvironment::AnalyzeNewsImpact(MarketContext &context) {
    // Fetch News Analysis
    // Only fetch periodically to avoid blocking HFT loop
-   if(TimeCurrent() % 14400 == 0) { // Every 4 hours (approx)
+   if(TimeCurrent() >= m_lastAnalysisTime + 14400) { // Every 4 hours
+       m_lastAnalysisTime = TimeCurrent();
+
        string newsJson = m_aiIntegrator->GetNewsAnalysis(_Symbol);
        string chartAnalysis = m_aiIntegrator->AnalyzeChart(_Symbol, "H4");
 
        Print("📰 News/Chart Analysis Update: ", chartAnalysis);
-       // Here we would parse 'chartAnalysis' JSON to extract directional bias
-       // and adjust m_riskEnv or m_W_policy weights accordingly.
+
+       // Real Implementation: Parse Analysis
+       bool isBullish = (StringFind(chartAnalysis, "Bullish") >= 0);
+       bool isBearish = (StringFind(chartAnalysis, "Bearish") >= 0);
+
+       if(isBullish) {
+           // Bias Policy Weights towards Buy
+           for(int i=0; i<DIM_FEATURES; i++) {
+               m_W_out[0][0] += 0.01; // Increase Buy Logit Bias
+           }
+           Print("📈 AI BIAS: BULLISH - Adjusted Policy Weights");
+       } else if(isBearish) {
+           for(int i=0; i<DIM_FEATURES; i++) {
+               m_W_out[0][1] += 0.01; // Increase Sell Logit Bias
+           }
+           Print("📉 AI BIAS: BEARISH - Adjusted Policy Weights");
+       }
    }
 }
 

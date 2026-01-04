@@ -18,3 +18,10 @@ pandas==2.2.3
 python-dotenv==1.0.1
 loguru==0.7.2
 browser-use==0.0.1
+torch>=2.0.0
+transformers>=4.36.0
+accelerate>=0.25.0
+bitsandbytes>=0.41.0
+huggingface_hub>=0.19.0
+scipy
+textblob

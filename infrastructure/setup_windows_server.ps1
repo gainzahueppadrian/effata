@@ -19,11 +19,21 @@ Write-Output "Docker Service Started."
 Write-Output "Pulling Python Image..."
 docker pull python:3.9-windowsservercore-ltsc2022
 
-# 4. Create Directory Structure
+# 4. Install Playwright Dependencies (Browsers)
+# Note: This usually runs inside the container, but if running locally:
+Write-Output "Installing Playwright Browsers (if running locally)..."
+try {
+    pip install playwright
+    python -m playwright install
+} catch {
+    Write-Output "Playwright install skipped (Python might not be in PATH)"
+}
+
+# 5. Create Directory Structure
 New-Item -ItemType Directory -Force -Path "C:\EffataTrading"
 New-Item -ItemType Directory -Force -Path "C:\EffataTrading\Logs"
 
-# 5. Note on MT5 Installation
+# 6. Note on MT5 Installation
 Write-Output "NOTE: MetaTrader 5 Terminal must be installed manually or via silent installer."
 Write-Output "Exness/ICMarkets installers do not support headless installation easily."
 Write-Output "Please copy the 'EFFATA_ORCHESTRATOR' EA to MQL5/Experts folder after installation."

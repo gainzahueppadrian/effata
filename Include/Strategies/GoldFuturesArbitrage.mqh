@@ -8,7 +8,11 @@
 #ifndef GOLD_FUTURES_ARBITRAGE_MQH
 #define GOLD_FUTURES_ARBITRAGE_MQH
 
+#ifdef __MQL5__
 #include <Trade/Trade.mqh>
+#endif
+
+#include "../Core/CompatMQL4.mqh"
 
 class CGoldFuturesArbitrage {
 private:
