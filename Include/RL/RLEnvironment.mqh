@@ -38,6 +38,25 @@
 #define MAX_POSITION_SIZE 0.05  // Maximum position size (5% of account)
 #define NUM_LATENT_HEADS 4  // Multi-Latent Attention Heads
 
+// New: Funding Account Rules Structure
+struct FundingAccountRules {
+   double maxDailyDrawdown; // e.g., 5%
+   double maxTotalDrawdown; // e.g., 10%
+   double profitTarget;     // e.g., 10%
+   double dailyStartingEquity;
+   double highWaterMark;
+   bool   isEnabled;
+
+   void Initialize(double balance) {
+      maxDailyDrawdown = 0.05;
+      maxTotalDrawdown = 0.10;
+      profitTarget = 0.10;
+      dailyStartingEquity = balance;
+      highWaterMark = balance;
+      isEnabled = true;
+   }
+};
+
 // Episodic Experience (Internal to this env)
 struct EpisodicExperience {
    double state[DIM_FEATURES];
@@ -102,6 +121,9 @@ private:
    int m_consecutiveWins;
    int m_consecutiveLosses;
 
+   FundingAccountRules m_fundingRules;
+   CAIIntegrator *m_aiIntegrator;
+
    //--- Internal Helpers
    double ActivationSwish(double x) { return x / (1.0 + MathExp(-x)); }
    double ActivationTanh(double x) { return (MathExp(x) - MathExp(-x)) / (MathExp(x) + MathExp(-x)); }
@@ -111,7 +133,9 @@ private:
    double CalculateTrendStrength();
    double CalculateWinProbability(const double &features[]);
    double CalculateRiskRewardRatio(const double &features[]);
-   void   ResetDailyMetrics() {}
+   void   ResetDailyMetrics();
+   bool   CheckFundingRules(const MarketContext &context);
+   void   AnalyzeNewsImpact(MarketContext &context);
 
    //--- Multi-Latent Attention Mechanism
    void ApplyMultiLatentAttention(const double &input_features[], double &context_vec[]);
@@ -205,6 +229,8 @@ CRLEnvironment::CRLEnvironment() {
    m_consecutiveWins = 0;
    m_consecutiveLosses = 0;
 
+   m_aiIntegrator = new CAIIntegrator();
+
    m_andean = new CAndeanOscillator(_Symbol, PERIOD_CURRENT);
    m_vwap = new CVWAP(_Symbol, PERIOD_CURRENT);
    m_fibo = new CFibonacci(_Symbol, PERIOD_CURRENT);
@@ -218,6 +244,7 @@ CRLEnvironment::~CRLEnvironment() {
    if(CheckPointer(m_riskEnv) == POINTER_DYNAMIC) delete m_riskEnv;
    if(CheckPointer(m_aiEnv) == POINTER_DYNAMIC) delete m_aiEnv;
    if(CheckPointer(m_optimizer) == POINTER_DYNAMIC) delete m_optimizer;
+   if(CheckPointer(m_aiIntegrator) == POINTER_DYNAMIC) delete m_aiIntegrator;
 
    if(CheckPointer(m_andean) == POINTER_DYNAMIC) delete m_andean;
    if(CheckPointer(m_vwap) == POINTER_DYNAMIC) delete m_vwap;
@@ -263,6 +290,7 @@ bool CRLEnvironment::Initialize() {
    m_accountBalance = AccountInfoDouble(ACCOUNT_BALANCE);
    m_peakEquity = AccountInfoDouble(ACCOUNT_EQUITY);
    m_dailyStartingEquity = AccountInfoDouble(ACCOUNT_EQUITY);
+   m_fundingRules.Initialize(m_accountBalance); // Initialize funding rules
    m_lastResetTime = TimeCurrent();
    Print("✅ DeepSeek-V2 RL Environment initialized with Muon Optimizer & Enhanced Features");
    return true;
@@ -427,10 +455,22 @@ void CRLEnvironment::ApplyMultiLatentAttention(const double &input_features[], d
 //+------------------------------------------------------------------+
 RLAction CRLEnvironment::Think(const double &market_features[], const MarketContext &context) {
    ResetDailyMetrics();
+
+   // 1. Funding Rules Check
+   if(!CheckFundingRules(context)) {
+      RLAction action; action.Initialize(); action.reasoning = "Funding Rule Violation"; return action;
+   }
+
+   // 2. Risk Management Check
    RiskAssessment riskAssessment = m_riskEnv->GetRiskAssessment();
    if(!riskAssessment.allowTrading) {
       RLAction action; action.Initialize(); action.reasoning = "Risk Block"; return action;
    }
+
+   // 3. News Impact Analysis
+   // Note: m_aiIntegrator calls can be slow, usually done asynchronously or cached
+   // For HFT, we might want to check a flag or simplified signal
+   // AnalyzeNewsImpact(context); // Optional: Uncomment if real-time fetch is non-blocking enough
 
    // Enhance features with internal calculations
    double enhanced_features[DIM_FEATURES];
@@ -577,4 +617,63 @@ bool CRLEnvironment::CheckRiskConstraints(RLAction &action, const MarketContext 
 }
 string CRLEnvironment::GetMemoryStatus() { return "Active"; }
 string CRLEnvironment::GetRiskStatus() { return "Active"; }
+
+//+------------------------------------------------------------------+
+//| New Helper Methods                                               |
+//+------------------------------------------------------------------+
+void CRLEnvironment::ResetDailyMetrics() {
+    MqlDateTime dt;
+    TimeCurrent(dt);
+    MqlDateTime lastDt;
+    TimeToStruct(m_lastResetTime, lastDt);
+
+    if(dt.day != lastDt.day) {
+        m_dailyStartingEquity = AccountInfoDouble(ACCOUNT_EQUITY);
+        m_lastResetTime = TimeCurrent();
+        Print("🔄 Daily Metrics Reset. Starting Equity: ", m_dailyStartingEquity);
+    }
+}
+
+bool CRLEnvironment::CheckFundingRules(const MarketContext &context) {
+    if(!m_fundingRules.isEnabled) return true;
+
+    double currentEquity = AccountInfoDouble(ACCOUNT_EQUITY);
+    double balance = AccountInfoDouble(ACCOUNT_BALANCE);
+
+    // 1. Daily Drawdown
+    double dailyDD = (m_dailyStartingEquity - currentEquity) / m_dailyStartingEquity;
+    if(dailyDD >= m_fundingRules.maxDailyDrawdown) {
+        Print("⛔ Funding Rule Hit: Daily Drawdown Exceeded (", DoubleToString(dailyDD*100, 2), "%)");
+        return false;
+    }
+
+    // 2. Max Total Drawdown
+    if(currentEquity > m_fundingRules.highWaterMark) m_fundingRules.highWaterMark = currentEquity;
+
+    double totalDD = (m_fundingRules.highWaterMark - currentEquity) / m_fundingRules.highWaterMark;
+    if(totalDD >= m_fundingRules.maxTotalDrawdown) {
+        Print("⛔ Funding Rule Hit: Max Drawdown Exceeded (", DoubleToString(totalDD*100, 2), "%)");
+        return false;
+    }
+
+    // 3. Profit Target (Just for info, doesn't stop trading usually, but can switch mode)
+    double profit = currentEquity - m_fundingRules.dailyStartingEquity; // Simplified logic
+    // ...
+
+    return true;
+}
+
+void CRLEnvironment::AnalyzeNewsImpact(MarketContext &context) {
+   // Fetch News Analysis
+   // Only fetch periodically to avoid blocking HFT loop
+   if(TimeCurrent() % 14400 == 0) { // Every 4 hours (approx)
+       string newsJson = m_aiIntegrator->GetNewsAnalysis(_Symbol);
+       string chartAnalysis = m_aiIntegrator->AnalyzeChart(_Symbol, "H4");
+
+       Print("📰 News/Chart Analysis Update: ", chartAnalysis);
+       // Here we would parse 'chartAnalysis' JSON to extract directional bias
+       // and adjust m_riskEnv or m_W_policy weights accordingly.
+   }
+}
+
 #endif // RL_ENVIRONMENT_MQH
