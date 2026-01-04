@@ -154,9 +154,11 @@ class CTrade {
 private:
    int m_magic;
    int m_deviation;
+   ulong m_result_order;
+   double m_result_price;
 
 public:
-   CTrade() { m_magic = 0; m_deviation = 10; }
+   CTrade() { m_magic = 0; m_deviation = 10; m_result_order = 0; m_result_price = 0.0; }
    ~CTrade() {}
 
    void SetExpertMagicNumber(int magic) { m_magic = magic; }
@@ -166,15 +168,28 @@ public:
       if(symbol==NULL) symbol = _Symbol;
       if(price==0.0) price = Ask;
       int ticket = OrderSend(symbol, OP_BUY, volume, price, m_deviation, sl, tp, comment, m_magic, 0, clrBlue);
-      return (ticket > 0);
+      if(ticket > 0) {
+          m_result_order = (ulong)ticket;
+          if(OrderSelect(ticket, SELECT_BY_TICKET)) m_result_price = OrderOpenPrice();
+          return true;
+      }
+      return false;
    }
 
    bool Sell(double volume, string symbol=NULL, double price=0.0, double sl=0.0, double tp=0.0, string comment="") {
       if(symbol==NULL) symbol = _Symbol;
       if(price==0.0) price = Bid;
       int ticket = OrderSend(symbol, OP_SELL, volume, price, m_deviation, sl, tp, comment, m_magic, 0, clrRed);
-      return (ticket > 0);
+      if(ticket > 0) {
+          m_result_order = (ulong)ticket;
+          if(OrderSelect(ticket, SELECT_BY_TICKET)) m_result_price = OrderOpenPrice();
+          return true;
+      }
+      return false;
    }
+
+   ulong ResultOrder() { return m_result_order; }
+   double ResultPrice() { return m_result_price; }
 
    bool PositionClose(const string symbol, ulong deviation=ULONG_MAX) {
       // Close all positions for symbol (Simplification for MQL4 port)
