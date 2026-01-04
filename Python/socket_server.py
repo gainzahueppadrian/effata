@@ -87,10 +87,22 @@ class MQL5SocketServer:
                 return {
                     "status": "success",
                     "signal": self._parse_signal(analysis.get("response", "")),
-                    "raw_response": analysis.get("response", "")
+                    "data": {"raw_response": analysis.get("response", "")}
                 }
             else:
                 return {"status": "error", "message": result.get("error", "Analysis failed")}
+
+        elif action == "analyze_sentiment":
+             symbol = request.get("symbol")
+             # Placeholder for real sentiment fetcher integration
+             return {
+                 "status": "success",
+                 "data": {
+                     "symbol": symbol,
+                     "sentiment_score": 0.5,
+                     "raw_response": "Neutral sentiment (simulated)"
+                 }
+             }
 
         elif action == "ping":
             return {"status": "success", "message": "pong"}
