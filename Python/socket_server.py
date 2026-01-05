@@ -6,11 +6,17 @@ import asyncio
 import json
 import socket
 import threading
-from typing import Dict, Any
+import time
+from typing import Dict, Any, List
 
 from loguru import logger
 from config import SOCKET_CONFIG, TRADING_PROMPT
 from trading_analyzer import TradingAnalyzer
+
+# Store recent trades for copy trading (simple in-memory queue)
+# In production, use Redis or a database.
+TRADE_QUEUE: List[Dict[str, Any]] = []
+MAX_QUEUE_SIZE = 100
 
 class MQL5SocketServer:
     def __init__(self, host=SOCKET_CONFIG["host"], port=SOCKET_CONFIG["port"]):
@@ -91,6 +97,42 @@ class MQL5SocketServer:
                 }
             else:
                 return {"status": "error", "message": result.get("error", "Analysis failed")}
+
+        elif action == "broadcast_trade":
+            # Leader sending a trade
+            trade_data = request.get("trade_data", {})
+            if trade_data:
+                # Add timestamp if missing
+                if "timestamp" not in trade_data:
+                    trade_data["timestamp"] = time.time()
+
+                # Add unique ID if missing
+                if "trade_id" not in trade_data:
+                    trade_data["trade_id"] = f"{int(time.time()*1000)}_{trade_data.get('symbol', 'UNK')}"
+
+                TRADE_QUEUE.append(trade_data)
+
+                # Maintain queue size
+                if len(TRADE_QUEUE) > MAX_QUEUE_SIZE:
+                    TRADE_QUEUE.pop(0)
+
+                logger.info(f"Broadcasted trade: {trade_data}")
+                return {"status": "success", "message": "Trade broadcasted"}
+            else:
+                return {"status": "error", "message": "No trade data provided"}
+
+        elif action == "get_latest_trades":
+            # Follower polling for trades
+            last_received_time = request.get("last_timestamp", 0)
+
+            # Filter trades newer than last_received_time
+            new_trades = [t for t in TRADE_QUEUE if t["timestamp"] > last_received_time]
+
+            return {
+                "status": "success",
+                "trades": new_trades,
+                "server_time": time.time()
+            }
 
         elif action == "ping":
             return {"status": "success", "message": "pong"}
