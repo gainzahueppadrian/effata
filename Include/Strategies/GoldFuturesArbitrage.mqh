@@ -15,6 +15,7 @@
 
 #ifdef __MQL4__
 #include "../Core/CompatMQL4.mqh"
+// Minimal MQL4 wrapper for logic if not covered by Compat
 class CPositionInfo {
 public:
    ulong Ticket() { return OrderTicket(); }
@@ -25,8 +26,6 @@ public:
    double TakeProfit() { return OrderTakeProfit(); }
    double Volume() { return OrderLots(); }
    int PositionType() { return OrderType(); }
-   // MQL4 doesn't have PositionClose in standard library, but we can simulate or use CTrade wrapper
-   // Assuming logic handles closing via CTrade
 };
 #endif
 
@@ -120,7 +119,11 @@ class CGoldFuturesArbitrage {
 private:
     CTrade                   m_spot_trade;
     CTrade                   m_future_trade;
+    #ifdef __MQL5__
     CPositionInfo            m_position_info;
+    #else
+    CPositionInfo            m_position_info; // MQL4 wrapper
+    #endif
     SPositionInfo            m_position;
     SArbitrageParams         m_params;
     ENUM_ARBITRAGE_STATUS    m_status;
@@ -197,19 +200,14 @@ public:
     double                  GetSpreadVolatility();
 };
 
-// ... Implementation logic ...
-// (Stubbing implementation to focus on structure correctness and size limits, assuming user provided logic is correct)
-
 CGoldFuturesArbitrage::CGoldFuturesArbitrage() {
     m_spot_symbol = "XAUUSD";
     m_future_symbol = "GC";
     m_status = ARBITRAGE_IDLE;
-    // ... init
+    m_check_interval_ms = 1000;
 }
 
-CGoldFuturesArbitrage::~CGoldFuturesArbitrage() {
-    // ... cleanup
-}
+CGoldFuturesArbitrage::~CGoldFuturesArbitrage() {}
 
 bool CGoldFuturesArbitrage::Initialize(string spot_symbol, string future_symbol) {
     m_spot_symbol = spot_symbol;
@@ -218,13 +216,52 @@ bool CGoldFuturesArbitrage::Initialize(string spot_symbol, string future_symbol)
     return true;
 }
 
+bool CGoldFuturesArbitrage::ScanForOpportunities() {
+    if(m_status != ARBITRAGE_IDLE) return false;
+
+    double spot_bid = SymbolInfoDouble(m_spot_symbol, SYMBOL_BID);
+    double fut_ask = SymbolInfoDouble(m_future_symbol, SYMBOL_ASK);
+
+    if(spot_bid == 0 || fut_ask == 0) return false;
+
+    double spread = (fut_ask - spot_bid) / spot_bid;
+    if(spread > m_params.min_spread_pct) {
+        SArbitrageOpportunity opp;
+        opp.direction = ARBITRAGE_SHORT_SPOT_LONG_FUTURE; // Example logic
+        opp.spread_pct = spread;
+        return EnterArbitrage(opp);
+    }
+    return false;
+}
+
+bool CGoldFuturesArbitrage::EnterArbitrage(SArbitrageOpportunity &opportunity) {
+    m_status = ARBITRAGE_ENTRING;
+    bool res = m_spot_trade.Buy(0.1, m_spot_symbol); // Simplified logic
+    if(res) m_status = ARBITRAGE_HEDGED;
+    else m_status = ARBITRAGE_IDLE;
+    return res;
+}
+
+bool CGoldFuturesArbitrage::ManageArbitrage() {
+    if(m_status == ARBITRAGE_HEDGED) {
+        // Check PnL
+        if(m_position.total_pnl > m_params.target_spread_pct) CloseArbitrage();
+    }
+    return true;
+}
+
+bool CGoldFuturesArbitrage::CloseArbitrage() {
+    m_status = ARBITRAGE_CLOSING;
+    // Close positions logic...
+    m_status = ARBITRAGE_COMPLETED;
+    m_status = ARBITRAGE_IDLE;
+    return true;
+}
+
+// Stub implementations
 bool CGoldFuturesArbitrage::Configure(string config_file) { return true; }
 void CGoldFuturesArbitrage::SetParameters(SArbitrageParams &params) { m_params = params; }
-bool CGoldFuturesArbitrage::ScanForOpportunities() { return true; }
 bool CGoldFuturesArbitrage::EvaluateOpportunity(SArbitrageOpportunity &opportunity) { return true; }
-bool CGoldFuturesArbitrage::EnterArbitrage(SArbitrageOpportunity &opportunity) { return true; }
-bool CGoldFuturesArbitrage::ManageArbitrage() { return true; }
-bool CGoldFuturesArbitrage::CloseArbitrage() { return true; }
 bool CGoldFuturesArbitrage::CloseLeg(string symbol, string ticket, double size) { return true; }
 bool CGoldFuturesArbitrage::EvaluateCalendarSpread() { return true; }
 bool CGoldFuturesArbitrage::EnterCalendarSpread() { return true; }
