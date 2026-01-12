@@ -145,3 +145,64 @@ int TimeHour(datetime date) {
 }
 
 #endif
+
+//+------------------------------------------------------------------+
+//| MQL4 Compatibility for CTrade                                    |
+//+------------------------------------------------------------------+
+#ifdef __MQL4__
+class CTrade {
+private:
+   int m_magic;
+   int m_deviation;
+   ulong m_result_order;
+   double m_result_price;
+
+public:
+   CTrade() { m_magic = 0; m_deviation = 10; m_result_order = 0; m_result_price = 0.0; }
+   ~CTrade() {}
+
+   void SetExpertMagicNumber(int magic) { m_magic = magic; }
+   void SetDeviationInPoints(int deviation) { m_deviation = deviation; }
+
+   bool Buy(double volume, string symbol=NULL, double price=0.0, double sl=0.0, double tp=0.0, string comment="") {
+      if(symbol==NULL) symbol = _Symbol;
+      if(price==0.0) price = Ask;
+      int ticket = OrderSend(symbol, OP_BUY, volume, price, m_deviation, sl, tp, comment, m_magic, 0, clrBlue);
+      if(ticket > 0) {
+          m_result_order = (ulong)ticket;
+          if(OrderSelect(ticket, SELECT_BY_TICKET)) m_result_price = OrderOpenPrice();
+          return true;
+      }
+      return false;
+   }
+
+   bool Sell(double volume, string symbol=NULL, double price=0.0, double sl=0.0, double tp=0.0, string comment="") {
+      if(symbol==NULL) symbol = _Symbol;
+      if(price==0.0) price = Bid;
+      int ticket = OrderSend(symbol, OP_SELL, volume, price, m_deviation, sl, tp, comment, m_magic, 0, clrRed);
+      if(ticket > 0) {
+          m_result_order = (ulong)ticket;
+          if(OrderSelect(ticket, SELECT_BY_TICKET)) m_result_price = OrderOpenPrice();
+          return true;
+      }
+      return false;
+   }
+
+   ulong ResultOrder() { return m_result_order; }
+   double ResultPrice() { return m_result_price; }
+
+   bool PositionClose(const string symbol, ulong deviation=ULONG_MAX) {
+      // Close all positions for symbol (Simplification for MQL4 port)
+      bool result = true;
+      for(int i=OrdersTotal()-1; i>=0; i--) {
+         if(OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) {
+            if(OrderSymbol() == symbol) {
+               double closePrice = (OrderType() == OP_BUY) ? Bid : Ask;
+               if(!OrderClose(OrderTicket(), OrderLots(), closePrice, 3, clrWhite)) result = false;
+            }
+         }
+      }
+      return result;
+   }
+};
+#endif

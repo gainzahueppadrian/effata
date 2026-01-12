@@ -37,6 +37,52 @@ public:
       return CallPythonServer(targetModel, prompt);
    }
 
+   // New: News Analysis Support
+   string GetNewsAnalysis(string symbol) {
+      JsonValue root(JsonObject, "");
+      root["action"]->operator=("analyze_news");
+      root["symbol"]->operator=(symbol);
+
+      string request = root.SerializeToString();
+      string response = "";
+      if(m_socket->SendAndReceive(request, response)) {
+         return response; // Caller parses JSON
+      }
+      return "";
+   }
+
+   // New: Sentiment Analysis Support
+   string GetSentimentAnalysis(string symbol) {
+      JsonValue root(JsonObject, "");
+      root["action"]->operator=("analyze_sentiment");
+      root["symbol"]->operator=(symbol);
+
+      string request = root.SerializeToString();
+      string response = "";
+      if(m_socket->SendAndReceive(request, response)) {
+         return response; // Caller parses JSON
+      }
+      return "";
+   }
+
+   // New: Chart Analysis Support (Agentic Browser)
+   string AnalyzeChart(string symbol, string timeframe) {
+       JsonValue root(JsonObject, "");
+       root["action"]->operator=("analyze_chart");
+       root["model"]->operator=("deepseek-v3"); // Default to DeepSeek as requested
+
+       string prompt = "You are a Professional Hedge Fund like Goldman Sachs, analize the chart in high timeframes for determine Directional Bias for 4 hours, daily, 2 weeks, montly and Low timeframes and recommend Trading actions for " + symbol + " and connect with RLEnvironment.mqh";
+       root["prompt"]->operator=(prompt);
+
+       string request = root.SerializeToString();
+       string response = "";
+       // Blocking call - use sparingly!
+       if(m_socket->SendAndReceive(request, response)) {
+           return response;
+       }
+       return "";
+   }
+
    string CallPythonServerRaw(string model, string prompt) {
       JsonValue root(JsonObject, "");
       // operator[] returns pointer to child, assume it creates if not exists

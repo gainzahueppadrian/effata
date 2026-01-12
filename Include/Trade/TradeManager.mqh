@@ -7,10 +7,52 @@
 #property link      "https://www.mql5.com"
 #property strict
 
+#ifdef __MQL5__
 #include <Trade/Trade.mqh>
 #include <Trade/PositionInfo.mqh>
 #include <Trade/AccountInfo.mqh>
 #include <Trade/SymbolInfo.mqh>
+#endif
+
+#ifdef __MQL4__
+#include "../Core/CompatMQL4.mqh"
+// Mock classes for MQL4 to reuse CTradeManager logic structure where possible
+// The CompatMQL4.mqh now includes a CTrade wrapper.
+class CSymbolInfo {
+public:
+   string m_name;
+   void Name(string name) { m_name = name; }
+   void RefreshRates() { RefreshRates(); }
+   double Ask() { return SymbolInfoDouble(m_name, SYMBOL_ASK); }
+   double Bid() { return SymbolInfoDouble(m_name, SYMBOL_BID); }
+   double Point() { return SymbolInfoDouble(m_name, SYMBOL_POINT); }
+   double TickValue() { return SymbolInfoDouble(m_name, SYMBOL_TRADE_TICK_VALUE); }
+   double TickSize() { return SymbolInfoDouble(m_name, SYMBOL_TRADE_TICK_SIZE); }
+   double LotsMin() { return SymbolInfoDouble(m_name, SYMBOL_VOLUME_MIN); }
+   double LotsMax() { return SymbolInfoDouble(m_name, SYMBOL_VOLUME_MAX); }
+   double LotsStep() { return SymbolInfoDouble(m_name, SYMBOL_VOLUME_STEP); }
+   double NormalizePrice(double price) { return NormalizeDouble(price, (int)SymbolInfoInteger(m_name, SYMBOL_DIGITS)); }
+};
+class CAccountInfo {
+public:
+   double Balance() { return AccountBalance(); }
+   double Equity() { return AccountEquity(); }
+};
+// CPositionInfo is harder to mock directly for MQL4 iteration, usually involves standard OrderSelect loops.
+// We will use directives inside the class.
+class CPositionInfo {
+public:
+    ulong m_ticket;
+    bool SelectByIndex(int i) { return OrderSelect(i, SELECT_BY_POS, MODE_TRADES); }
+    string Symbol() { return OrderSymbol(); }
+    ulong Ticket() { return OrderTicket(); }
+    double PriceOpen() { return OrderOpenPrice(); }
+    double StopLoss() { return OrderStopLoss(); }
+    double TakeProfit() { return OrderTakeProfit(); }
+    double Volume() { return OrderLots(); }
+    int PositionType() { return OrderType(); } // 0=Buy, 1=Sell
+};
+#endif
 
 //+------------------------------------------------------------------+
 //| Trade Manager Class                                              |
@@ -19,7 +61,11 @@ class CTradeManager
 {
 private:
    CTrade m_trade;
+   #ifdef __MQL5__
    CPositionInfo m_position;
+   #else
+   CPositionInfo m_position; // Use wrapper
+   #endif
    CAccountInfo m_account;
    CSymbolInfo m_symbol;
 
